@@ -29,7 +29,7 @@ ap.add_argument("--go-delay", type=float, default=5.0)
 ap.add_argument("--join-guest", metavar="PREFIX",
                 help="last player hunts a joinable entry starting with "
                      "PREFIX and JOINs it (console under test = host)")
-ap.add_argument("--port", type=int, default=9109)
+ap.add_argument("--port", type=int, default=9110)
 args = ap.parse_args()
 
 

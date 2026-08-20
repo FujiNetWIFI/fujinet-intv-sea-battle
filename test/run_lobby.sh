@@ -24,7 +24,7 @@ pkill -f 'fujinet -u 127.0.0.1:1808' 2>/dev/null || true
 sleep 0.5
 ( cd "$RIG/fn1" && exec ./fujinet -u 127.0.0.1:18081 ) > "$RIG/fn1.log" 2>&1 &
 FN1=$!
-( relay_server --port 9109 ) > "$RIG/lb_server.log" 2>&1 &
+( relay_server --port 9110 ) > "$RIG/lb_server.log" 2>&1 &
 SRV=$!
 trap 'kill $FN1 $SRV $IDLERS 2>/dev/null || true' EXIT
 sleep 1.5
@@ -36,10 +36,10 @@ sleep 0.5
 # A keypress is injected by breaking on the instruction right after the menu's
 # `MVI $1FF,R0 / XORI #$FF,R0` and forcing R0 to the value the port would have
 # produced; poking $01FF itself does not reach the emulated pad.
-MENU_RD=$(awk '/CMP  *MENU_PREV, R0/ {print $1; exit}' "$BUILD/soccer_net.lst")
+MENU_RD=$(awk '/CMP  *MENU_PREV, R0/ {print $1; exit}' "$BUILD/seabattle_net.lst")
 [ -n "$MENU_RD" ] || { echo "run_lobby.sh: cannot find MENU_PREV compare"; exit 1; }
 echo "menu read site: \$$MENU_RD"
-HOLD_ADDR=$(awk '/ SES_HOLD$/ { sub(/^0+/, "", $1); print $1 }' "$BUILD/soccer_net.sym")
+HOLD_ADDR=$(awk '/ SES_HOLD$/ { sub(/^0+/, "", $1); print $1 }' "$BUILD/seabattle_net.sym")
 [ -n "$HOLD_ADDR" ] || { echo "run_lobby.sh: cannot find SES_HOLD"; exit 1; }
 echo "matched-screen hold: \$$HOLD_ADDR"
 KEY8=44         # keypad 8   = down
@@ -70,7 +70,7 @@ press() {       # $1 = raw value: stop at the read, force it, resume
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
     timeout 240 "$JZINTV" -d --script="$RIG/lb1.scr" \
     --fujinet=localhost:19851 -e rom/exec.bin -g rom/grom.bin \
-    "$BUILD/soccer_net.bin" > "$RIG/lb1.out" 2>&1 || true
+    "$BUILD/seabattle_net.bin" > "$RIG/lb1.out" 2>&1 || true
 
 python3 - "$RIG/lb1.out" guest <<'PYEOF'
 import re, sys
@@ -195,7 +195,7 @@ kill $IDLERS 2>/dev/null || true
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
     timeout 240 "$JZINTV" -d --script="$RIG/lb2.scr" \
     --fujinet=localhost:19851 -e rom/exec.bin -g rom/grom.bin \
-    "$BUILD/soccer_net.bin" > "$RIG/lb2.out" 2>&1 &
+    "$BUILD/seabattle_net.bin" > "$RIG/lb2.out" 2>&1 &
 C2=$!
 sleep 8
 python3 test/lobby_idlers.py DELTA --join-guest GUEST > "$RIG/lb_idlers2.log" 2>&1 &

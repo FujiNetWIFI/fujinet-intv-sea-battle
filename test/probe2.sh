@@ -8,7 +8,7 @@ pkill -f 'fujinet -u 127.0.0.1:1808' 2>/dev/null || true
 sleep 0.5
 ( cd "$RIG/fn1" && exec ./fujinet -u 127.0.0.1:18081 ) > "$RIG/fn1.log" 2>&1 &
 FN1=$!
-( relay_server --port 9109 ) > "$RIG/srv1.log" 2>&1 &
+( relay_server --port 9110 ) > "$RIG/srv1.log" 2>&1 &
 SRV=$!
 trap 'kill $FN1 $SRV 2>/dev/null || true' EXIT
 sleep 2
@@ -22,7 +22,7 @@ sleep 2
 } > $BUILD/probe2.scr
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy timeout 100 "$JZINTV" -d \
     --script=$BUILD/probe2.scr --fujinet=localhost:19851 \
-    -e rom/exec.bin -g rom/grom.bin $BUILD/soccer_net1.bin \
+    -e rom/exec.bin -g rom/grom.bin $BUILD/seabattle_net1.bin \
     > $BUILD/probe2.log 2>&1 || true
 grep -E 'Hit breakpoint|RUNNING' $BUILD/probe2.log | head
 grep -B1 '^> q' $BUILD/probe2.log | head -3

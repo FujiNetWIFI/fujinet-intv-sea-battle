@@ -219,7 +219,7 @@ server-diff: $(RELAY_C)
 	$(PYTHON) tools/server_diff.py
 
 rig: $(RELAY_DEP)
-	$(MAKE) SRV_HOST=127.0.0.1 SRV_PORT=9109 $(RIG_BINS)
+	$(MAKE) SRV_HOST=127.0.0.1 SRV_PORT=9110 $(RIG_BINS)
 	$(MAKE) check-7000
 	PLAYERS=$(PLAYERS) SERVER=$(SERVER) test/run_rig.sh
 
@@ -229,7 +229,7 @@ rig: $(RELAY_DEP)
 # "CONNECTION LOST" path instead of the server's PEER_LEFT.
 # LEAVER=n, LEAVE_MODE=clean|timeout
 peerleft: $(RELAY_DEP)
-	$(MAKE) SRV_HOST=127.0.0.1 SRV_PORT=9109 $(RIG_BINS)
+	$(MAKE) SRV_HOST=127.0.0.1 SRV_PORT=9110 $(RIG_BINS)
 	$(MAKE) check-7000
 	PLAYERS=$(PLAYERS) SERVER=$(SERVER) test/run_peerleft.sh
 
@@ -237,14 +237,14 @@ peerleft: $(RELAY_DEP)
 # them already in a match.  Drives the menu from the debugger and
 # decodes the BACKTAB (text + colour) after each keypress.
 lobby: $(RELAY_DEP)
-	$(MAKE) SRV_HOST=127.0.0.1 SRV_PORT=9109 $(BUILD)/$(GAME)_net.bin
+	$(MAKE) SRV_HOST=127.0.0.1 SRV_PORT=9110 $(BUILD)/$(GAME)_net.bin
 	SERVER=$(SERVER) test/run_lobby.sh
 
 # Desync recovery: fault-inject console 2, watch the whole room
 # re-baseline together (the host's STATE push is a broadcast).  Reports
 # whether the deferred push fired at the quiescent point or hit RS_PEND_MAX.
 m4: $(RELAY_DEP)
-	$(MAKE) SRV_HOST=127.0.0.1 SRV_PORT=9109 $(RIG_BINS)
+	$(MAKE) SRV_HOST=127.0.0.1 SRV_PORT=9110 $(RIG_BINS)
 	$(MAKE) check-7000
 	PLAYERS=$(PLAYERS) SERVER=$(SERVER) test/run_m4.sh
 

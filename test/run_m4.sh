@@ -36,7 +36,7 @@ while [ "$i" -le "$PLAYERS" ]; do
     FNS="$FNS $!"
     i=$((i+1))
 done
-( relay_server --port 9109 --auto-go "$PLAYERS" ) \
+( relay_server --port 9110 --auto-go "$PLAYERS" ) \
     > "$RIG/m4_server.log" 2>&1 &
 SRV=$!
 trap 'kill $FNS $SRV 2>/dev/null || true' EXIT
@@ -80,7 +80,7 @@ while [ "$i" -le "$PLAYERS" ]; do
     SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
         timeout $((RUN_SECS + 200)) "$JZINTV" -d --script="$RIG/m4c$i.scr" \
         --fujinet=localhost:1985$i -e rom/exec.bin -g rom/grom.bin \
-        "$BUILD/soccer_net$i.bin" > "$RIG/m4c$i.out" 2>&1 &
+        "$BUILD/seabattle_net$i.bin" > "$RIG/m4c$i.out" 2>&1 &
     CONS="$CONS $!"
     sleep 2
     i=$((i+1))

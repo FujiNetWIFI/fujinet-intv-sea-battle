@@ -6,7 +6,7 @@
 # which tools/server_diff.py holds to byte-for-byte equality with it.
 #
 # Callers background and redirect as before:
-#     ( relay_server --port 9109 --auto-go "$PLAYERS" ) > "$LOG" 2>&1 &
+#     ( relay_server --port 9110 --auto-go "$PLAYERS" ) > "$LOG" 2>&1 &
 #     SRV=$!
 # The exec below replaces the subshell, so $! is still the real server PID and
 # every existing kill/trap keeps working.

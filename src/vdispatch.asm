@@ -207,30 +207,81 @@ SCR_STEP:
 ; Both columns are live every tick -- L_539B is called with R1=0 then R1=1
 ; unconditionally, no turn arbiter (spikes/NOTES.md M2 #6).
 ;
-; ** PLACEHOLDER -- NOT YET MEASURED AT THE LIVE SCAN. **  PORTING.md §5.5
-; requires every scripted event code be measured (`b 1527`/`b 152E`, force
-; the raw ACTIVE-LOW byte, dump $011F-$0122 on a hook build), never
-; extrapolated from a sibling port -- Utopia's '0'-key mis-extrapolation is
-; the cautionary example.  This table currently holds ONLY the family's
-; universal idle encoding ($40 = idle disc, no keypad) so main_lag/lag0/
-; det_a/det_b assemble and run without exercising any real input; it settles
-; in whatever state the cart parks in with zero input and hands off to fuzz.
-; Do not read `make det`/`make lagcheck` as gameplay-covering until this is
-; replaced with a real, measured script per the M2b procedure -- see
-; spikes/NOTES.md "Open, to settle before SCRIPT_TBL" for the exact recipe
-; and the coverage this table must reach once real codes are known:
-;   1. whatever this cart's boot/idle phase is ($0164 == 0 or 8)
-;   2. a fresh disc/action event on each seat that drives $0164 to 5
-;      (live play, confirmed by both L_57C6-poll callers running)
-;   3. both seats moving simultaneously, different directions
-;   4. the action/restart button on both seats ($0121/$0122 -- the $58A6
-;      shared handler, which branches on the controller index R1)
-;   5. sustained play long enough to reach the phase-4/6/7 event sequence
-;      (the explosion/event animation candidate quiescent point) at least
-;      once, so det's stall injection actually exercises it
-;   6. hand over to the masked fuzz
+; ** MEASURED AT THE LIVE SCAN (M4), not extrapolated -- PORTING.md §5.5. **
+; Forced raw ACTIVE-LOW bytes at `b 1527`/`b 152E`, held 6 scans then
+; released, on the hook build (SPIKE_VIRT=0, real dispatch), and confirmed
+; the full launch sequence end to end via live memory dumps:
+;
+;   raw $7E key 1 -> decoded $011F/$0120 = $81 (event value 1, EXEC-
+;       universal keypad encoding, confirmed identical to every sibling
+;       port's table)
+;   raw $D7 ENTER -> decoded = $8B (event value 11)
+;   idle -> $40
+;
+; Keypad DIGIT presses dispatch through the SAME cell/slot as disc events
+; (bit 7 set = keypad, per LS_VDISPATCH's generic decode) -- NOT through
+; the kp0/kp1 columns, which are reserved for the action-button class
+; field ($0121/$0122, values 1-3) used only in the BATTLE phase (§ below).
+;
+; CONFIRMED SEQUENCE (live dumps, both seats, this session):
+;   fresh key "1" while $0164==1 and the selected fleet is not at sea ->
+;     $5439's handler adds one ship of type 0 to the fleet: fleet state
+;     cell ($017D+4*seat+fleet) goes 0 -> 1, and the matching inventory
+;     nibble in SB_INVENTORY decrements (measured: seat0 $01B5 $0011 ->
+;     $0001, hi nibble; seat1 mirrors on the lo nibble)
+;   fresh ENTER with >=1 ship assigned and the fleet not yet at sea ->
+;     $5520's handler sets bit 2 (at sea) and writes the fleet's home-port
+;     map position from L_55B7 ($105E for seat 0, $821E for seat 1,
+;     confirmed by dis1600, not just observed): fleet state 1 -> 5
+;
+; This is the ONLY way to get real gameplay running on this cart -- the
+; boot state (phase 1, MAP) is otherwise near-static, and masked $3F
+; disc-only fuzz can never produce a keypad digit or ENTER (§5.5/§7.25).
+;
+; Coverage this script reaches, in order:
+;   1. settle in the boot/map-idle state ($0164 == 1, no fleet at sea)
+;   2. seat 0 launches a fleet (confirmed: SB_INVENTORY changes,
+;      SB_FLEET_STATE bit 2 sets) -- the strongest destination-phase
+;      signal on this cart (spikes/NOTES.md M3 §11)
+;   3. seat 1 launches a fleet, symmetrically
+;   4. both launched fleets driven toward each other via sustained disc
+;      movement, exercising the map-phase movement path this session
+;      already confirmed lands in SHADOW_CTRL/SHADOW_CTRL_R
+;   5. hand over to the masked fuzz
+;
+; NOT YET REACHED BY THIS SCRIPT: the tactical battle phase ($0164==5),
+; which needs the two fleets to actually collide on the map -- map scale
+; and fleet speed were not measured this session, so the movement rows
+; below are a best-effort diagonal converge, not a proven collision. If
+; battle is never reached, `check_dest_phase.py`'s SB_FLEET_STATE
+; assertion still passes (a fleet WAS launched); tightening further to
+; require phase 5 is future work once collision is confirmed.
 SCRIPT_TBL:
-        DECLE   40, $40, $40, 0, 0      ; idle settle; no real input yet
+        DECLE   20, $40, $40, 0, 0      ; settle at boot (phase 1, map)
+        ; --- seat 0: add a ship (key 1), then launch (ENTER) ---
+        DECLE   3,  $81, $40, 0, 0
+        DECLE   3,  $40, $40, 0, 0
+        DECLE   3,  $8B, $40, 0, 0
+        DECLE   4,  $40, $40, 0, 0
+        ; --- seat 1: add a ship (key 1), then launch (ENTER) ---
+        DECLE   3,  $40, $81, 0, 0
+        DECLE   3,  $40, $40, 0, 0
+        DECLE   3,  $40, $8B, 0, 0
+        DECLE   4,  $40, $40, 0, 0
+        ; --- both fleets launched at their home ports ($105E seat 0,
+        ; $821E seat 1 -- far apart on both axes).  Drive them toward
+        ; each other: seat 0 needs +X/-Y, seat 1 needs -X/+Y.  Alternate
+        ; axes since this is a single selected fleet per seat, not a
+        ; true diagonal disc position.
+        DECLE   10, $0C, $00, 0, 0      ; seat0 east, seat1 west
+        DECLE   10, $08, $04, 0, 0      ; seat0 south, seat1 north
+        DECLE   10, $0C, $00, 0, 0
+        DECLE   10, $08, $04, 0, 0
+        DECLE   10, $0C, $00, 0, 0
+        DECLE   10, $08, $04, 0, 0
+        DECLE   10, $0C, $00, 0, 0
+        DECLE   10, $08, $04, 0, 0
+        DECLE   20, $40, $40, 0, 0      ; let AI/contact scans catch up
         DECLE   0                       ; done -> SLF fuzz from here
     ENDI
 

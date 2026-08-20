@@ -156,13 +156,6 @@ MASTER_TICK:
 @@mt_local:
     ENDI
         JSR     R5,     UPDATE_SHADOW
-        ; Mirror SB_TICK2's REAL countdown into netcode RAM every tick, so
-        ; LS_CKSUM (generic, unchanged) sees SB_TICK2's actual live pacing.
-        ; See ram.asm/exec_equ.asm for why this can't be a direct alias.
-        MVI     SB_CNT2_LO, R0
-        MVO     R0,     SC_CNT2
-        MVI     SB_CNT2_HI, R0
-        MVO     R0,     SC_CNT3
     IF SPIKE_RECORD <> 0
         JSR     R5,     REC_CAPTURE     ; log the live cells for this tick
     ENDI
@@ -213,11 +206,12 @@ MASTER_TICK:
 
 ; ---------------------------------------------------------------------------
 ; SC_GAME_TICK -- lockstep.asm (generic, unchanged) calls this by name from
-; LS_PASS ("all four entries, always armed" -- a comment written for an
-; earlier port; on this cart there is exactly one entry left to reproduce
-; by hand). SB_TICK2/SB_TICK3 (table slots 2/3) fire NATIVELY, dispatched
-; by $17D5 immediately after MASTER_TICK returns -- see the NEW_TIMER_TBL
-; note at the top of this file for why that is still stall-safe.
+; BOTH MASTER_TICK's local path and LS_PASS's netplay path ("all four
+; entries, always armed" -- a comment written for an earlier port; on this
+; cart there is exactly one entry left to reproduce by hand). SB_TICK2/
+; SB_TICK3 (table slots 2/3) fire NATIVELY, dispatched by $17D5 immediately
+; after MASTER_TICK returns -- see the NEW_TIMER_TBL note at the top of
+; this file for why that is still stall-safe.
 ;
 ; SB_TICK1 is NOT native, and DOES need an explicit call here: $17D5's
 ; slot 1 target is MASTER_TICK (our code), not SB_TICK1 (the game's own
@@ -229,15 +223,55 @@ MASTER_TICK:
 ; own logic silently never ran at all. Confirmed live by re-decoding
 ; det_a.out after the fix.)
 ;
+; Also does the two pieces of per-tick bookkeeping that must happen on
+; BOTH paths, in time for LS_CKSUM/RS_PENDING (both called after this, on
+; both paths -- lockstep.asm's own call order): mirroring SB_TICK2's real
+; countdown into SC_CNT2/SC_CNT3, and computing SB_QUIESCENT. Putting these
+; in MASTER_TICK's local-only section instead would have left them stale
+; during actual netplay (NET_ACTIVE returns via LS_PASS before ever
+; reaching that section) -- caught the same way as the SB_TICK1 bug, by
+; asking "does this run on BOTH paths" rather than trusting a green build.
+;
 ; Interval 1, so unconditional -- called every tick, exactly like every
 ; other port's single mandatory game-logic entry.
 ;
-; Clobbers R0-R3 (whatever SB_TICK1 clobbers). Returns via the caller's R5.
+; Clobbers R0-R3. Returns via the caller's R5.
 ; ---------------------------------------------------------------------------
 SC_GAME_TICK:
         PSHR    R5
         JSR     R5,     SB_TICK1
+        ; Mirror SB_TICK2's REAL countdown into netcode RAM, so LS_CKSUM
+        ; (generic, unchanged) sees SB_TICK2's actual live pacing.  See
+        ; ram.asm/exec_equ.asm for why this can't be a direct alias.
+        MVI     SB_CNT2_LO, R0
+        MVO     R0,     SC_CNT2
+        MVI     SB_CNT2_HI, R0
+        MVO     R0,     SC_CNT3
+        ; SB_QUIESCENT: 1 iff $0164==0 AND $01D9==0 (spikes/NOTES.md M3's
+        ; quiescent point) -- resync.asm's generic RS_PENDING reads this
+        ; through SC_PHASE/SC_PHASE_DEAD (exec_equ.asm).
+        MVI     SB_PHASE, R0
+        TSTR    R0
+        BNEQ    @@gt_not_q
+        MVI     SB_EVT_CNT, R0
+        TSTR    R0
+        BNEQ    @@gt_not_q
+        MVII    #1,     R0
+        MVO     R0,     SB_QUIESCENT
+        B       @@gt_qout
+@@gt_not_q:
+        CLRR    R0
+        MVO     R0,     SB_QUIESCENT
+@@gt_qout:
         PULR    R7
+
+; SC_POSSESSION -- lockstep.asm (generic, unchanged) calls this by name
+; from LS_PASS, right after SC_GAME_TICK ("ARB_SEAT for NAME_DRAW, display
+; only" -- a Soccer-specific comment; Soccer's ARB_SEAT highlighted
+; whichever team held the ball). Sea Battle has no equivalent possession
+; concept -- ARB_SEAT (ram.asm) stays declared and always zero. Stub.
+SC_POSSESSION:
+        MOVR    R5,     R7
 
 ; ---------------------------------------------------------------------------
 ; SB_START_SHIM -- replaces the stale-absolute-address JSR at $57BF/$57C0

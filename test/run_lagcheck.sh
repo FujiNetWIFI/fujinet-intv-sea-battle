@@ -1,15 +1,19 @@
 #!/bin/sh
 # M4 interception proof: the same in-ROM demo script, run at d=0
-# (soccer_lag0) and d=20 (soccer_lag).  The delay ring is the ONLY
+# (seabattle_lag0) and d=20 (seabattle_lag).  The delay ring is the ONLY
 # difference between the two builds, so the whole game-state timeline must
 # come out shifted by exactly d.
 #
-# What is sampled: $0321 and $0339 -- object-record field +4 of the two
-# controlled players ($031D + 4 and $0335 + 4).  Those are the cells the
-# polled read at L_57E1 writes the decoded direction into, so they are
-# where intercepted input actually LANDS IN GAME STATE, one step past the
-# shadow pair.  (Watching the shadow pair itself would only prove the ring
-# shifted, not that the cart consumed it.)
+# What is sampled: $0321 and $0341 -- object-record field +4 (packed
+# velocity) of seat 0's fleet 0 (MOB index 0, $031D+4) and seat 1's fleet 0
+# (MOB index 4, $031D+8*4+4=$0341).  Both fleets are launched by
+# SCRIPT_TBL's opening rows (src/vdispatch.asm) before movement starts.
+# L_5422 (the MAP-phase disc handler) writes the decoded direction here,
+# so this is where intercepted input actually LANDS IN GAME STATE, one
+# step past the shadow pair.  (Watching the shadow pair itself would only
+# prove the ring shifted, not that the cart consumed it.)  Confirmed by
+# dis1600: `SLL R2,2 / SLL R2,1 / ADDI #$0321,R2 / MVO@ R0,R2` at $5433-
+# $5437, where R2 = 4*seat+fleet (spikes/NOTES.md M4).
 #
 # The verdict cross-correlates the two series and reports the shift that
 # best aligns them, rather than edge-detecting one cell.  Both records hold
@@ -30,14 +34,14 @@ cd "$(dirname "$0")/.."
 BUILD=build
 JZINTV=${JZINTV:-$HOME/Workspace/jzintv-20200712-src/bin/jzintv}
 
-make -s $BUILD/soccer_lag0.bin $BUILD/soccer_lag.bin >/dev/null
+make -s $BUILD/seabattle_lag0.bin $BUILD/seabattle_lag.bin >/dev/null
 
 probe() {  # $1 = binary, $2 = output log
     {
         printf 'b 14D5\nr 10000000\ng 7 14D7\nn 14D5\n'
         i=0
         while [ "$i" -lt 220 ]; do
-            printf 'r 7000\nm 8108 2\nm 0320 2\nm 0338 2\n'
+            printf 'r 7000\nm 8108 2\nm 0320 2\nm 0340 2\n'
             i=$((i+1))
         done
         printf 'q\n'
@@ -47,8 +51,8 @@ probe() {  # $1 = binary, $2 = output log
         -e rom/exec.bin -g rom/grom.bin "$1" > "$2" 2>&1 || true
 }
 
-probe $BUILD/soccer_lag0.bin $BUILD/lag0.log
-probe $BUILD/soccer_lag.bin  $BUILD/lag20.log
+probe $BUILD/seabattle_lag0.bin $BUILD/lag0.log
+probe $BUILD/seabattle_lag.bin  $BUILD/lag20.log
 
 python3 - $BUILD/lag0.log $BUILD/lag20.log <<'EOF'
 import re, sys
@@ -63,9 +67,9 @@ def series(path):
         if a == 0x8108:
             tick = w[0] | (w[1] << 8)
         elif a == 0x320:
-            v0 = w[1]                       # $0321
-        elif a == 0x338 and tick is not None and v0 is not None:
-            out[tick] = (v0, w[1])          # $0339
+            v0 = w[1]                       # $0321 (seat 0's fleet 0)
+        elif a == 0x340 and tick is not None and v0 is not None:
+            out[tick] = (v0, w[1])          # $0341 (seat 1's fleet 0)
     return out
 
 a = series(sys.argv[1])

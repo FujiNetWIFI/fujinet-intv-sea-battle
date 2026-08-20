@@ -1,7 +1,7 @@
 #!/bin/sh
 # Full local N-player rig (PLAYERS=2..4, default 2), headless:
 #   Nx fujinet-pc-rs232 (isolated copies, BOIP :19851..:1985N)
-#   1x intv_relay_server (:9109, --auto-go N)
+#   1x intv_relay_server (:9110, --auto-go N)
 #   Nx jzintv --fujinet (net1 waits; net2..netN auto-join), fuzz inputs
 # Pass criteria: every console NET_ACTIVE with matching seat/count, ticks
 # advance, DIAG counters zero, N-way CRC rounds verified, no mismatches.
@@ -15,7 +15,7 @@ PLAYERS="${PLAYERS:-2}"
 # fuzz inputs must never reach production.
 if ! grep -q '127\.0\.0\.1' "$BUILD/srv_endpoint.asm" 2>/dev/null; then
     echo "run_rig.sh: build/srv_endpoint.asm is not 127.0.0.1 -- rebuild with"
-    echo "  make SRV_HOST=127.0.0.1 build/soccer_net1.bin ..."
+    echo "  make SRV_HOST=127.0.0.1 build/seabattle_net1.bin ..."
     exit 1
 fi
 JZINTV="${JZINTV:-$HOME/Workspace/jzintv-20200712-src/bin/jzintv}"
@@ -53,7 +53,7 @@ while [ "$i" -le "$PLAYERS" ]; do
     FNS="$FNS $!"
     i=$((i+1))
 done
-( relay_server --port 9109 --auto-go "$PLAYERS" ) \
+( relay_server --port 9110 --auto-go "$PLAYERS" ) \
     > "$RIG/server.log" 2>&1 &
 SRV=$!
 trap 'kill $FNS $SRV 2>/dev/null || true' EXIT
@@ -75,13 +75,13 @@ while [ "$i" -le "$PLAYERS" ]; do
         # Later consoles launch 2 s apart; shorten their runs so everyone
         # quits at about the same wall moment (a console outliving its
         # peers by more than the gate timeout would count a bogus drop).
-        printf 'g 7 14D7\nn 14D5\nr %d\nm 8100 20\nm 8150 60\nm 81C0 30\nm 80C0 2\nm 0170 10\nq\n' \
+        printf 'g 7 14D7\nn 14D5\nr %d\nm 8100 20\nm 8150 60\nm 81C0 30\nm 80C0 2\nm 0160 10\nq\n' \
             $(( (RUN_SECS - 2 * (i - 1)) * 200000 ))
     } > "$RIG/c$i.scr"
     SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
         timeout $((RUN_SECS + 200)) "$JZINTV" -d --script="$RIG/c$i.scr" \
         --fujinet=localhost:1985$i -e rom/exec.bin -g rom/grom.bin \
-        "$BUILD/soccer_net$i.bin" > "$RIG/c$i.out" 2>&1 &
+        "$BUILD/seabattle_net$i.bin" > "$RIG/c$i.out" 2>&1 &
     CONS="$CONS $!"
     sleep 2
     i=$((i+1))
@@ -117,32 +117,27 @@ for n in range(1, players + 1):
     roster = ["".join(chr(m.get(0x81C0 + 9 * s + i, 0)) for i in range(8)).rstrip("\0")
               for s in range(count)]
     gtbl = m.get(0x80C0, 0) | (m.get(0x80C1, 0) << 8)
-    phase = m.get(0x179, 0)
-    clk = (m.get(0x174), m.get(0x175))
-    score = (m.get(0x177), m.get(0x178))
+    phase = m.get(0x164, 0)
     print(f"console {n}: name={name!r} seat={seat} count={count} "
           f"active={active} dropped={dropped} tick={tick} "
-          f"diag(slip,rej,tmo,err)={diag} phase=${phase:02X} "
-          f"clock={clk[0]:02X}:{clk[1]:02X} score={score[0]}-{score[1]} "
+          f"diag(slip,rej,tmo,err)={diag} $0164=${phase:02X} "
           f"roster={roster}")
     seats.add(seat)
     ok &= (active == 1 and dropped == 0 and tick > 200
            and diag == [0, 0, 0, 0] and count == players)
     # Destination-phase assertion (PORTING.md §5.5, §7.25).  Any multi-console
-    # gate can park identically in a prompt exactly as a det pair can, and on
-    # this cart GAME_TBL is a CONSTANT ($5869, installed once at $50A1), so it
-    # carries no phase information at all -- the check has to come from game
-    # state.  See tools/check_dest_phase.py for the same three traps.
-    if phase == 0x02:
-        print(f"console {n}: PARKED IN THE KICKOFF HOLD ($0179=$02) -- "
-              f"no gameplay covered")
-        ok = False
-    if phase == 0x40:
-        print(f"console {n}: PARKED AT PERIOD OVER ($0179=$40) -- disc fuzz "
-              f"cannot answer the key-3 prompt (§7.25)")
-        ok = False
-    if clk == (0x2D, 0x00):
-        print(f"console {n}: match clock never left 45:00 -- play never went live")
+    # gate can park identically in a prompt exactly as a det pair can.  This
+    # rig build runs masked $3F disc-only fuzz (NET_FUZZ), which can NEVER
+    # produce a keypad digit or ENTER -- so it can never launch a fleet and
+    # will sit in $0164==1 (map, idle) for the WHOLE run, by design (this is
+    # a real limitation, not a bug: confirm the mechanism only, not gameplay
+    # coverage, until this rig script is extended to inject the scripted
+    # keypad sequence too).  The one real trap this cart can still hit under
+    # pure disc fuzz is $0164==6 (GAME OVER, terminal) -- unreachable without
+    # a launched fleet today, kept as a guard for when that changes.
+    if phase == 0x06:
+        print(f"console {n}: PARKED AT GAME OVER (\\$0164=$06) -- terminal, "
+              f"every dump agrees trivially")
         ok = False
 ok &= seats == set(range(players))
 if seats != set(range(players)):

@@ -193,16 +193,17 @@ SB_EVT_ARM      EQU     $01D8   ; 10-tick countdown gating the phase 4->7->5
 SB_EVT_CNT      EQU     $01D9   ; settle countdown; ($0164==0 && this==0) is
                                 ;  the QUIESCENT POINT candidate (below)
 
-; §7.6 quiescent point: primary candidate is ($0164==0 && $01D9==0) --
-; equivalently $035D==$1906 (the EXEC null table) -- the map<->battle
-; handover, all input dead for ~3 passes.  A weaker but MORE FREQUENT
-; candidate is any $01D9!=0 window (also entered on every fleet launch and
-; every depth charge, 2-4 passes each), since $52EE-$52F0 gates the entire
-; per-player update on it.  BOTH require reaching the map/keypad flow at
-; all, which masked $3F disc-only fuzz can never do (§7.29: a QUIESCE=1
-; forcing mode that pokes $0164:=0, $01D9:=4 is required, not optional, or
-; this whole branch of RS_PENDING goes untested forever).  NOT yet confirmed
-; on screen -- recon-level only.
+; §7.6 quiescent point: ($0164==0 && $01D9==0) -- equivalently
+; $035D==$1906 (the EXEC null table) -- the map<->battle handover, all
+; input dead for ~3 passes.  resync.asm's generic RS_PENDING reads this
+; through SC_PHASE/SC_PHASE_DEAD (defined in ram.asm, alongside the
+; SB_QUIESCENT cell they point at -- include-order: this file is included
+; before ram.asm in core.asm, so a forward reference to a ram.asm symbol
+; here does not assemble).  NOT yet confirmed on screen that this window
+; is truly all-input-dead -- recon-level decode. §7.29 still applies:
+; masked $3F disc-only fuzz can never launch a fleet, so it can never
+; reach this point either -- a QUIESCE=1 forcing mode is required, not
+; optional, before trusting `make m4`'s quiescent branch. Not yet written.
 
 ; §7.9 false-PASS candidates: THREE bare `DECR R7` one-instruction self-loops
 ; found at $5E90, $5EA7 and $5EAE -- all inside the MOB animation-script

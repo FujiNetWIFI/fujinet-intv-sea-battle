@@ -431,3 +431,220 @@ M3 timer-corruption fix and its own SB_TICK1-dispatch-loss regression both
 caught and fixed via live boot-dump verification, not just by a passing
 gate). `det`'s destination-phase check correctly and honestly FAILS
 (placeholder `SCRIPT_TBL, phase never left 1) -- item 3 above closes that.
+
+## M4 — the real launch sequence, and the ladder through `rig`
+
+Resumed the punch list. Item 1 (get a fleet to sea) turned out to be
+fast to confirm empirically once the handler was disassembled:
+
+### The keypad launch protocol -- decoded and confirmed live
+
+`$5439` (the MAP table's keypad handler, `$035D` slot 1) accepts:
+- digits 1-9 -> ship type 0-8: adds one ship of that type to the CURRENTLY
+  SELECTED fleet, decrementing the matching `SB_INVENTORY` nibble (hi = P0,
+  lo = P1), as long as the fleet isn't already at sea, has &lt;3 ships, and
+  doesn't already have that type. Confirmed via `$5451`/`$5467`/`$5496`.
+- ENTER -> if the selected fleet has &gt;=1 ship and isn't at sea: sets
+  `SB_FLEET_STATE`'s bit 2 (at sea) and writes the fleet's home-port map
+  position from `L_55B7` (`$105E` seat 0, `$821E` seat 1). If the fleet
+  has 0 ships, ENTER instead cycles the selection to the next fleet.
+  Confirmed via `$5520`/`$554C`.
+
+Live proof (hook build, `b 1527`/`b 152E`, raw `$7E`=key1 then `$D7`=ENTER,
+held 6 scans then released -- the SAME recipe that measured the input
+codes in M2): seat 0's `$017D` went `$00` -&gt; `$01` (ship added,
+`SB_INVENTORY[$01B5]` `$0011`-&gt;`$0001`) -&gt; `$05` (bit 2 set, at sea,
+`$0185/$0186` = `$10/$5E` matching `L_55B7`'s constant exactly). Seat 1
+mirrors it symmetrically via the right port, confirmed independently.
+
+**Keypad digit events dispatch through the SAME cell/slot as disc events**
+(bit 7 set = keypad, per `LS_VDISPATCH`'s generic decode) -- not through
+the separate action-button class field. This resolved the earlier "why
+does $0121 never respond" mystery from M2/M3: those three cart-side
+`$0121` read sites live inside routines only reached from the BATTLE
+phase's table, which was never installed while stuck in the map phase --
+the sweep was testing a dead path, not a wrong code, exactly as
+hypothesized at the time.
+
+### `SCRIPT_TBL` rewritten with the confirmed sequence; `det` passes fully
+
+Wrote the real script: settle -&gt; seat 0 launches (key 1, ENTER) -&gt;
+seat 1 launches (key 1, ENTER) -&gt; sustained movement toward the map
+centre -&gt; hand off to fuzz. Rewrote `check_dest_phase.py` to assert
+`SB_INVENTORY` changed and/or `SB_FLEET_STATE` shows a launched fleet
+(the confirmed strong signals from M3 §11), replacing the placeholder's
+weak `$0164 &gt; 1` check.
+
+```
+DETERMINISM PASS: all 256 compared ticks have identical checksums
+DEST-PHASE OK: phase $01, inventory changed = True, fleet launched = True
+```
+
+**First time this gate has genuinely passed end to end** -- both the
+stall/checksum mechanism AND confirmed real gameplay coverage. Phase
+never reached 5 (battle) -- the movement rows are a best-effort diagonal
+converge, not a proven collision; not required by the current checker.
+
+### `lagcheck`: real, strong pass
+
+Adapted `test/run_lagcheck.sh` for the confirmed movement-landing cells
+(`$0321` seat 0's fleet 0, `$0341` seat 1's fleet 0 -- `L_5422`'s
+`SLL R2,2/SLL R2,1/ADDI #$0321,R2/MVO@ R0,R2`, `R2` = `4*seat+fleet`).
+Result: **100% agreement at shift=20 ticks, against an 11% baseline** --
+about as clean a confirmation as this test can produce.
+
+### `echo-test`: pass (one missing file)
+
+Had forgotten to copy `tools/latency_probe_server.py` from the Soccer
+tree during scaffolding -- `make echo-test` failed with a missing-file
+error, not a real bug. Copied it; 100 clean echo rounds through
+`jzintv --fujinet` -&gt; the shared workspace `fujinet-pc-rs232` instance
+on port 9995. `E_STAGE` = `$AA` (pass).
+
+### `server-diff`: fixed and passing (moved up from the original plan)
+
+Restored the Python relay's partial-frame guard (one line,
+`if len(client.rx) &lt; need: return`, matching every pre-v2 sibling and
+the C relay, which already had it) -- exactly what Soccer's README asked
+the next port to do. `tools/server_diff.py --strict`: 6/6 scenarios,
+`framing` no longer an expected divergence.
+
+### Two more real bugs, found the same way as M3's: live verification, not trust in a green build
+
+1. **`resync.asm`/`lockstep.asm` reference more Soccer-specific symbols
+   than M1 accounted for.** `make rig`'s first attempt failed to assemble:
+   `SC_POSSESSION` (called unconditionally from `LS_PASS`, "ARB_SEAT for
+   NAME_DRAW, display only" -- Soccer-specific, this cart has no
+   possession concept, needed a stub), `SC_PHASE`/`SC_PHASE_DEAD`
+   (resync.asm's generic `RS_PENDING` quiescent-gate predicate -- this is
+   the §7.6 gate I hadn't wired in at all), and `RS_SPARE2` (a tail-layout
+   cell I'd accidentally dropped during the M3 rewrite). Fixed: `ram.asm`
+   restores `RS_SPARE2`, adds a computed `SB_QUIESCENT` flag (since this
+   cart's quiescent point is a CONJUNCTION of two cells -- `$0164==0 &&
+   $01D9==0` -- not expressible as the single AND-mask
+   `SC_PHASE`/`SC_PHASE_DEAD` was designed for), and `SC_POSSESSION` is a
+   stub in `hook.asm`. **Generalizes M3's own lesson**: "copy unchanged"
+   files are only exercised by whichever build variants you've actually
+   assembled -- `hook`/`virt`/`det`/`lag`/`echo` never touch
+   `session.asm`/`lockstep.asm`/`resync.asm`'s `NET_SESSION`-gated content
+   at all; only a `net`/`rig` build does. Assemble EVERY build variant at
+   least once before trusting any of them.
+
+2. **The SC_CNT2/3 mirror and the new SB_QUIESCENT flag were computed only
+   on MASTER_TICK's LOCAL path**, which the netplay path (`NET_ACTIVE`)
+   never reaches -- it returns via `LS_PASS` before that code runs. Would
+   have left both stale during actual netplay while passing every
+   single-process gate (`det` never exercises `NET_ACTIVE`). Caught by
+   asking the exact question M3's writeup recommends ("does this run on
+   BOTH paths?") before it ever reached a live rig, not by a failing
+   gate -- moved both into `SC_GAME_TICK`, which IS called from both
+   `MASTER_TICK`'s local branch and `LS_PASS` (lockstep.asm's own call
+   order confirms `SC_GAME_TICK` runs before `LS_CKSUM`/`RS_PENDING` on
+   both paths).
+
+### `make rig`: a REAL, reproducible, well-characterized failure
+
+After the fixes above, `make rig` ran end-to-end for the first time --
+two real `fujinet-pc-rs232` processes, a real relay, two real `jzintv`
+consoles, ~90 s, ~2300 ticks. Session mechanics are completely healthy:
+
+```
+console 1: active=1 dropped=0 tick=2309 diag(slip,rej,tmo,err)=[0,0,0,0]
+console 2: active=1 dropped=0 tick=2312 diag(slip,rej,tmo,err)=[0,0,0,0]
+server: match crc_rounds=32 crc_mismatches=1   (run 1)
+server: match crc_rounds=28 crc_mismatches=3   (run 2, same ticks)
+RIG FAIL
+```
+
+**Reproduced twice, identical ticks both times: 448, 576, 704** -- every
+OTHER 64-tick CRC checkpoint (448=7x64, 576=9x64, 704=11x64), starting
+after the scripted launch/movement phase (which ends ~tick 166) is well
+behind, i.e. during the masked-fuzz phase. No more mismatches after 704
+in either run despite running to tick ~2300 -- whatever triggers this
+either stops recurring or the resync (which DID fire and succeed each
+time -- both consoles finished with 0 drops) puts things in a state where
+it can't recur.
+
+**This is a real, narrow desync -- not a mechanism failure.** The
+`RS_PENDING`/`RS_REBASE` safety net worked exactly as designed: both
+sessions completed cleanly to their full run length after every mismatch,
+with zero drops and zero DIAG errors. That is genuinely reassuring, not
+just a consolation -- it means the CRC+resync net this whole architecture
+depends on is doing its job even in the presence of whatever the
+underlying bug is.
+
+**What's ruled out, by construction, given `$0164` never left `$01` (map,
+idle) for either console in either run:**
+- RNG: this cart has zero RNG sites; `RNG_LO`/`RNG_HI` are always 0 on
+  both consoles. Not the cause.
+- `GAME_TBL_LO/HI`: `$035D` stays at the MAP table's constant address the
+  whole time phase is 1. Not the cause.
+- `SC_CNT2`/`SC_CNT3` (the `SB_TICK2` mirror): `SB_TICK2` is only ever
+  armed by `SB_START_SHIM` (the RETREAT button, battle-phase only) or the
+  two M3-patched direct-write sites (also battle-phase only, ship-
+  destroyed handler). Neither is reachable from phase 1. The mirror
+  should be constant `$2C81` (stopped) throughout. Not the cause (barring
+  a bug in the mirror mechanism itself, not yet independently verified).
+- The keypad launch/movement sequence itself: proven bit-exact
+  synchronized by `lagcheck`'s 100%-at-shift-20 result, and it completes
+  by tick ~166, long before the first mismatch at 448.
+
+**What's NOT ruled out**: anything in `$015D-$01EF` that `L_539B`
+(per-player fleet blink, unconditional every tick), `L_55F9` (fleet-
+contact scan) or `L_5639` (mine scan) touch, MOB-table writes from
+fuzzed movement (**note: `$031D-$035C` is OUTSIDE `LS_CKSUM`'s range
+entirely** -- a movement-only divergence there would be a real,
+undetected desync, not a reported CRC mismatch, so it can't directly
+explain a mismatch, but a subtle interaction feeding back into the
+checksummed range is not excluded), or a bug in the new `SB_QUIESCENT`/
+mirror code introduced this session that hasn't been independently
+verified byte-for-byte.
+
+### Diagnostic attempt: partial, infrastructure lesson for next time
+
+Tried to pin the exact diverging byte by breaking both consoles at
+`LS_CKSUM` ($D99A) on its 7th hit (7*64=448) and dumping the full
+`$015D-$01EF` range from each for a direct comparison. Got console 2's
+dump; console 1 repeatedly failed to reach the 7th hit within a 200s
+per-process timeout, apparently stalling for a long real-time interval
+between its 2nd and 3rd hits (matchmaking-time variance between the
+waiting host and the auto-joining guest, most likely) -- never resolved
+within this session's remaining time.
+
+**Lesson for next time**: don't try to time-align two independently-
+launched live jzIntv debugger sessions via wall-clock breakpoint hit
+counts -- real matchmaking/network timing varies too much between a
+waiting host and an auto-joining guest to make this reliable. The robust
+version of this diagnostic is an IN-ROM one: add a small trace ring to
+the `net`/`rig` build itself (mirroring `debug.asm`'s `TRACE_TICK`
+approach, gated behind a new build flag so it doesn't touch the
+shipping `net` build) that records a per-tick (or per-64-tick) checksum
+of `$015D-$01EF` into netcode RAM, keyed by tick number, on BOTH
+consoles independently. Dump it from each console's OWN end-of-run
+memory dump (which `run_rig.sh` already does reliably) and diff the two
+rings in Python by tick number after the fact -- no live synchronization
+needed at all, and it would immediately show which BYTE first disagreed
+at tick 448, not just that the whole-range checksum did.
+
+## Next-session punch list, in order (supersedes the M2/M3 list)
+
+1. **Root-cause the rig CRC mismatch** (M4 above). Build the in-ROM
+   per-tick trace-ring diagnostic described above; it is the highest-
+   leverage next step since `m4`/`peerleft`/hardware all depend on the
+   sim actually being deterministic across two real processes, not just
+   in `det`'s single-process test.
+2. Once fixed, re-run `make rig` to confirm 0 mismatches, then continue:
+   `make m4` (both plain and `QUIESCE=1` -- the quiescent branch needs the
+   scripted keypad sequence to ever reach `$0164==0 && $01D9==0`, which
+   the rig's fuzz-after-script design should already provide some
+   coverage of, but verify), `make peerleft`, hardware images.
+3. Drive the two scripted fleets into an actual collision (confirm
+   `$0164` reaches 5, `$035D` reaches `SB_HTBL_BATTLE`); tighten
+   `check_dest_phase.py` further once confirmed. Not required for
+   correctness, but closes the last coverage gap in `SCRIPT_TBL`.
+4. Confirm the battle-phase action-button codes (the depth-charge
+   buttons) now that a live non-null handler table is reachable.
+5. Wire `$017B/$017C`/`$01D6/$01D7` clamps in `SB_REBASE_HOOK` alongside
+   the existing `$0164` clamp (M3 §7.27 audit item, not yet done).
+6. Confirm the `$0164==0 && $01D9==0` quiescent point on screen and write
+   the `QUIESCE=1` forcing mode (§7.29) -- still not done.

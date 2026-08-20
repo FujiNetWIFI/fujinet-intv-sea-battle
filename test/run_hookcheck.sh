@@ -30,7 +30,7 @@ cd "$(dirname "$0")/.."
 BUILD=build
 JZINTV=${JZINTV:-$HOME/Workspace/jzintv-20200712-src/bin/jzintv}
 MODE=${1:-hook}
-BIN=$BUILD/soccer_$MODE.bin
+BIN=$BUILD/seabattle_$MODE.bin
 make -s $BIN >/dev/null
 
 # raw ACTIVE-LOW port bytes (port value = $FF XOR pressed-bits)
