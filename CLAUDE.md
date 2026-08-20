@@ -7,21 +7,26 @@ cart's evidence trail (M0 recon, M1 hook build, M2 empirical input-code
 measurement, M3 a deep second pass that caught and fixed a real bug, M4
 the real keypad launch sequence + a reproducible rig-only desync, M5 —
 `m4`/`peerleft`/hardware images, with a second real bug found and fixed
-proving the quiescent resync branch).
+proving the quiescent resync branch, M6 — confirmed working on real
+hardware).
 
-**Every automated gate through `peerleft` passes; hardware images are
-built.** `make rig` runs end-to-end for real but **fails with a
-reproducible CRC mismatch** at ticks 448/576/704 (see `spikes/NOTES.md`
-M4) — a real, narrow desync in the map-phase idle bookkeeping that the
-resync safety net successfully recovers from every time. **Deliberate
-project decision (M5): accept this as-is and continue** rather than block
-on root-causing it first, since `m4` (deliberate fault injection, both
-resync branches) and `peerleft` (both leave modes) both pass cleanly with
-the desync still present and unexplained — matching the Auto Racing
-precedent in PORTING.md §7.21 for a bounded, CRC-caught residual.
-Root-causing it is still valuable future work, just not a gate anymore.
-No hardware (real PiRTO II) testing has been done. Do not assume any gate
-passes without running it.
+**Working, on real hardware.** Every automated gate through `peerleft`
+passes, hardware images are built, and the user has confirmed two real
+PiRTO II Intellivisions, each with a FujiNet, playing against each other
+over the live production relay (`fujinet.online:9110`) using the plain
+(non-HUD) build — "delay seems ok" (M6; no HUD numbers captured yet, see
+the punch list). `make rig` still runs end-to-end for real but **fails
+with a reproducible CRC mismatch** at ticks 448/576/704 (see
+`spikes/NOTES.md` M4) — a real, narrow desync in the map-phase idle
+bookkeeping that the resync safety net successfully recovers from every
+time. **Deliberate project decision (M5): accept this as-is and
+continue** rather than block on root-causing it first, since `m4`
+(deliberate fault injection, both resync branches), `peerleft` (both
+leave modes), AND now real hardware play all work cleanly with the desync
+still present and unexplained — matching the Auto Racing precedent in
+PORTING.md §7.21 for a bounded, CRC-caught residual. Root-causing it is
+still valuable future work, just not a gate anymore. Do not assume any
+gate passes without running it.
 
 Sea Battle is **strictly 2-player**, simultaneous (no turn arbiter): the
 per-player update `L_539B` runs for seat 0 then seat 1 unconditionally
@@ -168,7 +173,9 @@ jump — see the M5 writeup for the real bug this took to get right) →
 peerleft (**PASS, both leave modes** — `LEAVE_MODE=clean` and `=timeout`,
 fully generic, no cart-specific adaptation needed) → hardware images
 (**built**: `make rom` → `build/seabattle_net.rom`, `make rom-hud` →
-`build/seabattle_nethud.rom`; neither tested on physical PiRTO IIs).
+`build/seabattle_nethud.rom`) → real hardware (**CONFIRMED WORKING, M6**
+— user report, two PiRTO IIs over the live production relay, plain build,
+"delay seems ok"; HUD build not yet run for measured `L`/`S`/`T` numbers).
 
 Assignments: production port 9110, FujiNet Lobby appkey 18, maxplayers 2.
 `server/intv_relay_server.py` is protocol v2 (seat-tagged, rooms), inherited

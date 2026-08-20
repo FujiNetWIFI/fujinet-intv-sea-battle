@@ -763,3 +763,35 @@ decision, separate from building the image).
 (both branches) all pass, verified for real this session. `rig` fails
 its own strict gate on the known, accepted, recoverable desync (M4) --
 a deliberate, documented exception, not an oversight.
+
+## M6 — real hardware, confirmed working (user report)
+
+Outside this repo's own automated gates: the production relay
+(`fujinet.online:9110`) is deployed and live, and the user confirmed two
+real PiRTO II Intellivisions, each with a FujiNet, playing Sea Battle
+against each other over it -- the `plain` (non-HUD) `build/seabattle_net.rom`
+image. User's assessment: **"delay seems ok."**
+
+This is the step nothing in this repo could exercise on its own (no
+amount of emulated `rig`/`m4` testing substitutes for two physical
+consoles and a real internet round trip to the relay), and it's the last
+item PORTING.md §8's procedure lists. Sea Battle joins the rest of the
+family as a real, working netplay port.
+
+**Not yet captured, because the plain (non-HUD) build was used**: the
+`L`/`S`/`T`/`R` HUD readout (`make rom-hud` -> `build/seabattle_nethud.rom`)
+that the family's methodology (PORTING.md §6/§10 step 10) calls for to
+turn "delay seems ok" into a measured number and tune `d` deliberately
+rather than by feel. If a future session runs the HUD build for even one
+match, record the steady-state `L`/`S`/`T` values here -- `L` near `d-1`
+with `S 00` means the current `d=3` (150 ms at this cart's measured 20 Hz
+tick) is well-matched to the real round trip; a nonzero `S` or a lopsided
+`L` would say whether to raise `d` or investigate the transport cost
+instead (PORTING.md §6's diagnosis table).
+
+This user report does not modify anything else on the punch list above
+(rig desync root-cause, battle-phase collision, `$017B`-family clamps)
+-- it confirms the port works end-to-end on real hardware DESPITE those
+open items, which is exactly what the CRC+resync safety net and the
+conservative clamp set are supposed to buy: real play surviving whatever
+those unresolved items would otherwise have caused.

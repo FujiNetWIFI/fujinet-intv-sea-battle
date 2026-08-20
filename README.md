@@ -4,15 +4,18 @@ Two-player head-to-head **Sea Battle** (Mattel, 1980) across the internet:
 two real Intellivisions, each with a FujiNet, playing the original
 cartridge in delay-based lockstep through a TCP relay.
 
-**Every automated gate through `peerleft` passes, and hardware images are
-built.** The core interception, determinism, transport, matchmaking, and
-desync-recovery engineering is real, built, and verified against this
-machine's actual toolchain, with confirmed real gameplay coverage (a
-scripted keypad fleet launch). A real two-console rig run surfaced a
-reproducible, well-characterized desync that the resync mechanism
-recovers from every time — accepted as a known, non-blocking issue rather
-than a gate (see *Status* below). `spikes/NOTES.md` is the full evidence
-trail, including several real bugs this session caught and fixed before
+**Working, on real hardware.** Every automated gate through `peerleft`
+passes, hardware images are built and deployed, and the user has
+confirmed two real PiRTO II Intellivisions, each with a FujiNet, playing
+over the live production relay (`fujinet.online:9110`). The core
+interception, determinism, transport, matchmaking, and desync-recovery
+engineering is verified against this machine's actual toolchain, with
+confirmed real gameplay coverage (a scripted keypad fleet launch). A real
+two-console rig run separately surfaced a reproducible, well-characterized
+desync that the resync mechanism recovers from every time — accepted as a
+known, non-blocking issue rather than a gate (see *Status* below).
+`spikes/NOTES.md` is the full evidence trail, including several real bugs
+this session caught and fixed before
 they reached a later gate.
 
 The original ROM is not modified in any interesting sense: 14 words of
@@ -132,7 +135,7 @@ Assignments: relay port **9110**, Lobby appkey **18**, maxplayers **2**.
 | `rig` | **runs end-to-end for real** — two real `fujinet-pc-rs232` processes, a real relay, two real consoles, ~2300 ticks. Session mechanics are fully healthy (0 drops, 0 DIAG errors, correct seat/roster). **FAILS its own strict gate**: a CRC mismatch reproduces at the identical ticks (448, 576, 704) across two independent runs. The resync safety net recovers every time — both sessions complete cleanly. **Accepted as a known issue, not a blocker** (see below). |
 | `m4` | **pass, both branches.** A deliberate fault (`SB_INVENTORY[0]` corrupted to `$77`) is detected and genuinely repaired — verified byte-for-byte, not just via the server's log line. `QUIESCE=1 make m4` separately proves the OTHER resync path: the push deferred to a quiescent moment so the map doesn't visibly jump. Getting that branch to fire took finding and fixing a real bug in the quiescent-point condition itself — see `spikes/NOTES.md` M5. |
 | `peerleft` | **pass, both leave modes** (`LEAVE_MODE=clean` and `=timeout`) — fully generic, no cart-specific adaptation needed. |
-| hardware images | **built** — `build/seabattle_net.rom` and `build/seabattle_nethud.rom` (HUD bring-up variant). Not tested on physical PiRTO IIs. |
+| hardware images | **built and deployed** — `build/seabattle_net.rom` and `build/seabattle_nethud.rom` (HUD bring-up variant). Production relay (`fujinet.online:9110`) is live; **user-confirmed working on two real PiRTO II Intellivisions with FujiNets**, playing over the actual relay. This is a user report from real play, not something exercised by an automated gate in this repo. |
 
 ### What is NOT proven, and why
 
@@ -150,9 +153,12 @@ Assignments: relay port **9110**, Lobby appkey **18**, maxplayers **2**.
    launched and driven toward each other by best-effort movement, not a
    proven collision. The battle-phase action-button (depth-charge) codes
    are therefore also still unconfirmed.
-3. **No hardware testing has been attempted.** The prerequisites are
-   present on this machine, but real PiRTO II consoles are needed for the
-   final step.
+3. ~~No hardware testing has been attempted~~ — **DONE**: the user
+   confirmed two real PiRTO II Intellivisions, each with a FujiNet,
+   playing over the live production relay (`fujinet.online:9110`).
+   Specifics of that session (delay feel, whether a resync was visible,
+   which build was used) are not yet captured here — see `spikes/NOTES.md`
+   for whatever detail is available.
 
 See `spikes/NOTES.md` for the full, ordered punch list for continuing this
 port.
