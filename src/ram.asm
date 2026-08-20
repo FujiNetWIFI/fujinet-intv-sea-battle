@@ -210,13 +210,15 @@ SHADOW_KP_R     EQU     $8143   ; virtual $0122 (action/restart, seat 1)
 ; SB_QUIESCENT: the resync-gate predicate resync.asm's generic RS_PENDING
 ; expects at SC_PHASE/SC_PHASE_DEAD (`MVI SC_PHASE,R0 / ANDI
 ; #SC_PHASE_DEAD,R0 / BNEQ ...dead ball...`).  This cart's quiescent point
-; is a CONJUNCTION of two cells ($0164==0 && $01D9==0 -- spikes/NOTES.md
-; M3), which a single AND-mask on one raw cell can't express, so
-; MASTER_TICK computes this derived flag every tick (1 = quiescent, 0 =
-; not) and SC_PHASE/SC_PHASE_DEAD (exec_equ.asm) point at it with a
-; one-bit mask.  PURELY DERIVED from cells already inside the standard CRC
-; range ($015D-$01EF) -- needs no independent CRC or image coverage, same
-; reasoning as Soccer's ARB_SEAT.
+; is $0164==0 (confirmed live-traced, M4 -- the battle-exit handler at
+; $5C65-$5C6E sets exactly this state for a real 4-tick window every time
+; a battle ends).  Computed into this derived flag every tick (in
+; SC_GAME_TICK, not MASTER_TICK's local-only section -- must run on both
+; the local AND netplay paths) rather than aliased directly, mainly so a
+; future genuinely-multi-cell quiescent condition would drop in without
+; disturbing resync.asm's single AND-mask read.  PURELY DERIVED from a
+; cell already inside the standard CRC range ($015D-$01EF) -- needs no
+; independent CRC or image coverage, same reasoning as Soccer's ARB_SEAT.
 SB_QUIESCENT    EQU     $81AF
 SC_PHASE        EQU     SB_QUIESCENT
 SC_PHASE_DEAD   EQU     $01

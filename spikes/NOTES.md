@@ -633,11 +633,12 @@ at tick 448, not just that the whole-range checksum did.
    leverage next step since `m4`/`peerleft`/hardware all depend on the
    sim actually being deterministic across two real processes, not just
    in `det`'s single-process test.
-2. Once fixed, re-run `make rig` to confirm 0 mismatches, then continue:
-   `make m4` (both plain and `QUIESCE=1` -- the quiescent branch needs the
-   scripted keypad sequence to ever reach `$0164==0 && $01D9==0`, which
-   the rig's fuzz-after-script design should already provide some
-   coverage of, but verify), `make peerleft`, hardware images.
+2. Once fixed, re-run `make rig` to confirm 0 mismatches. (Superseded by
+   M5: the project decision was to accept the desync as-is, since the
+   resync mechanism recovers it every time with zero drops -- `m4`,
+   `peerleft` and hardware images were all completed successfully with
+   the desync still present and unexplained. Root-causing it remains
+   valuable future work, just no longer a hard blocker.)
 3. Drive the two scripted fleets into an actual collision (confirm
    `$0164` reaches 5, `$035D` reaches `SB_HTBL_BATTLE`); tighten
    `check_dest_phase.py` further once confirmed. Not required for
@@ -646,5 +647,119 @@ at tick 448, not just that the whole-range checksum did.
    buttons) now that a live non-null handler table is reachable.
 5. Wire `$017B/$017C`/`$01D6/$01D7` clamps in `SB_REBASE_HOOK` alongside
    the existing `$0164` clamp (M3 §7.27 audit item, not yet done).
-6. Confirm the `$0164==0 && $01D9==0` quiescent point on screen and write
-   the `QUIESCE=1` forcing mode (§7.29) -- still not done.
+6. ~~Confirm the quiescent point on screen and write the `QUIESCE=1`
+   forcing mode~~ -- DONE, M5, with a real bug fix along the way (see M5).
+
+## M5 — accepting the rig desync; `m4` (both branches), `peerleft` (both branches), hardware images
+
+The user's call: since the resync mechanism recovers the M4 desync every
+time (zero drops, zero DIAG errors, both sessions completed cleanly),
+continue down the ladder rather than block on root-causing it first --
+matching PORTING.md's own Auto Racing precedent for a bounded, CRC-caught
+residual. Root-causing it is still on the punch list, just not a gate.
+
+### `make m4`: a real fault, real repair, verified byte-for-byte
+
+Adapted `test/run_m4.sh` for this cart: fault cell is `SB_INVENTORY[0]`
+(`$01B5`, seat 0's ship-type-0 count -- inside the CRC range, unambiguously
+game state, exactly the kind of divergence a player would notice), poked
+to `$77` (an obviously-corrupt value, safe since it only participates in
+subtract/borrow-check arithmetic, never used as an index). The verdict
+doesn't just trust the server's "recovered" log line -- it separately
+confirms the fault byte itself is no longer `$77` by the end of the run,
+so a resync that only patched over the CRC bookkeeping without actually
+repairing the corrupted byte would be caught.
+
+```
+console 1: active=1 dropped=0 hold=0 diag=[0,0,0,0]
+           resync gate: cap expired at 60 ticks (pushed mid-motion)
+           inventory_changed=True fleet_launched=True
+server: mismatches=4 crc-ok-lines=8 recovered-after-fault=True
+M4 PASS
+```
+
+### `QUIESCE=1 make m4`: a real bug in the quiescent-point condition, found and fixed
+
+The first attempt at proving the OTHER branch of `RS_PENDING` (the
+dead-ball push, deferred so the map doesn't visibly jump) failed to fire
+at all, even after forcing `$0164:=0` and `$01D9:=0` via the debugger.
+Traced why by re-reading phase 0's own body (`$52CD`): it tests
+`$01D9==0` FIRST, each tick, and transitions to phase 1 in the SAME tick
+that becomes true. `SB_QUIESCENT` is computed AFTER `SB_TICK1` runs (in
+`SC_GAME_TICK`) -- so by the time it checks, if `$01D9` really was `0`
+this tick, `$0164` is already `1`, not `0`. **The M3 condition
+(`$0164==0 && $01D9==0`) can essentially never be observed true.**
+
+Confirmed the fix by live-tracing the REAL quiescent window instead of
+guessing: `$5C65-$5C6E`, inside the tactical-battle-exit handler, does
+`MVO #0,$0164` then `MVO #4,$01D9` -- a genuine, RECURRING 4-tick window
+every time a battle ends (map redraw, all input dead), not a one-time
+boot artifact. The correct condition is `$0164==0` ALONE: reaching phase
+0 at all (checked post-tick) already means `$01D9` was nonzero this tick,
+i.e. still counting down. Fixed `SB_QUIESCENT`'s computation in
+`src/hook.asm` and the documentation in `exec_equ.asm`/`ram.asm`
+accordingly; re-ran `det`/`lagcheck` clean to confirm no regression.
+
+Getting the `QUIESCE=1` FORCING MODE itself right took three iterations,
+each one a real lesson:
+1. A single precisely-timed poke never landed: CRC comparison (and
+   therefore `RS_PENDING` actually starting to poll) only happens on
+   64-tick boundaries, and `RS_PEND_MAX` is only 60 ticks -- a narrow
+   forced window can fall entirely outside the window `RS_PENDING` is
+   active in.
+2. Forcing continuously for the WHOLE remaining run does make the branch
+   fire ("QUIESCENT ... after 3 ticks", "the dead-ball branch fired as
+   intended") -- but also holds console 1 in a permanently artificial
+   state, manufacturing 29 of its own mismatches and never letting the
+   session reach a genuinely clean end state (`recovered-after-fault=
+   False`), which fails the OTHER thing this gate needs to prove.
+3. **`RS_GATE` records only the reason for the MOST RECENT push** -- this
+   cart's own already-known organic desync keeps triggering further,
+   unrelated cap-driven pushes for the rest of a long run, silently
+   overwriting the evidence that the quiescent branch fired earlier even
+   when it genuinely had. Fixed by bounding the forced window to ~15s
+   (comfortably past the cap window) and capturing `RS_GATE` with an
+   intermediate debugger dump immediately after releasing the force,
+   before any later unrelated push can overwrite it -- `test/run_m4.sh`'s
+   Python verdict reads the FIRST occurrence of that cell in the log, not
+   the last.
+
+```
+QUIESCE run: the dead-ball branch of RS_PENDING fired as intended
+server: mismatches=12 crc-ok-lines=6 recovered-after-fault=True
+M4 PASS
+```
+
+Both branches of `RS_PENDING` now proven, for real, live-traced against
+the disassembly rather than assumed.
+
+### `make peerleft`: both branches, real BACKTAB decode
+
+No cart-specific adaptation needed at all -- fully generic (BACKTAB text
+decode, `PEER_SCR`/`PEER_WHY`, leaver name, DIAG counters).
+
+```
+clean:   PEER_SCR=1 PEER_WHY=1 left_name='GUEST25' diag=[0,0,0,0]
+         "PLAYER LEFT" / "GUEST25" / "PRESS RESET" -- PASS
+timeout: PEER_SCR=1 PEER_WHY=0 diag=[0,0,0,0]
+         "CONNECTION LOST" / "PRESS RESET" -- PASS
+```
+
+### Hardware images built
+
+`make rom` -> `build/seabattle_net.rom` (17 KB, endpoint
+`N:TCP://fujinet.online:9110/` -- the assigned production relay, baked in
+by the Makefile's default `SRV_HOST`/`SRV_PORT`). `make rom-hud` ->
+`build/seabattle_nethud.rom`, the bring-up image with the live diagnostic
+HUD row, for tuning `d` against measured RTT once real hardware is
+available. Neither has been tested on physical PiRTO IIs, and the
+production relay is not yet running this game (that is a deployment
+decision, separate from building the image).
+
+### Updated status: every automated gate through peerleft passes
+
+`verify-org`, `verify-patch`, `check-7000`, `hook`, `virt`, `det`,
+`lagcheck`, `echo-test`, `server-diff`, `m4` (both branches), `peerleft`
+(both branches) all pass, verified for real this session. `rig` fails
+its own strict gate on the known, accepted, recoverable desync (M4) --
+a deliberate, documented exception, not an oversight.

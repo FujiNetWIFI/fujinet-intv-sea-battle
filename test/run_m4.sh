@@ -1,10 +1,17 @@
 #!/bin/sh
 # M8 recovery test: the N-player rig with a fault injection -- console 2's
-# game scratch cell $016D (the standing-pin mask: persistent, CRC-covered,
-# game-consequential) is corrupted mid-run via the debugger.  Expected:
-# CRC mismatch detected, the host pushes the state image (broadcast), ALL
-# consoles re-baseline together, CRC rounds go back to matching, nobody
-# drops.  PLAYERS=2..4 (default 2).
+# SB_INVENTORY cell $01B5 (seat 0's ship-type-0 count, packed nibble:
+# persistent, CRC-covered, unambiguously game state a player would notice)
+# is corrupted mid-run via the debugger.  Expected: CRC mismatch detected,
+# the host pushes the state image (broadcast), ALL consoles re-baseline
+# together, CRC rounds go back to matching, nobody drops.  PLAYERS=2..4
+# (default 2).
+#
+# NOTE (spikes/NOTES.md M4): a real, reproducible, narrow CRC mismatch was
+# already found and characterized during ordinary rig testing (ticks
+# 448/576/704, root cause not yet found).  The resync mechanism recovered
+# it cleanly every time -- this gate proves that mechanism works on
+# purpose, under a controlled fault, independent of that open finding.
 set -e
 . "$(dirname "$0")/serverlib.sh"
 BUILD=build
@@ -59,23 +66,76 @@ while [ "$i" -le "$PLAYERS" ]; do
         done
         printf 'g 7 14D7\nn 14D5\n'
         if [ "$i" = 1 ] && [ -n "$QUIESCE" ]; then
-            # QUIESCE=1: 2 s after the fault lands, force the HOST's phase
-            # cell to the kickoff hold ($02, a SC_PHASE_DEAD bit) so
-            # RS_PENDING's quiescent branch is exercised instead of the cap.
-            # Under fuzz the ball is otherwise never dead -- no goals are
-            # scored, so $0179 sits at $04 for the whole run and the gate
-            # code would never execute in any automated test.
-            printf 'r 8400000\ne 179 2\nr %d\n' $(( (SECS - 42) * 200000 ))
+            # QUIESCE=1: starting when the fault lands (matching console
+            # 2's timing below), keep FORCING the HOST into the quiescent
+            # point ($0164:=0, $01D9:=4 -- the SAME two writes the real
+            # battle-exit handler makes at $5C65-$5C6E, exec_equ.asm)
+            # repeatedly across a wide window, instead of one precisely-
+            # timed poke.  $01D9 must be NONZERO here, not 0: phase 0's
+            # own body consumes $01D9==0 and advances to phase 1 within
+            # the same tick it's tested, so forcing $01D9:=0 directly
+            # never leaves phase 0 observable at all (found the hard way).
+            #
+            # A ONE-SHOT or briefly-repeated poke does not reliably land:
+            # CRC comparison (and therefore mismatch detection, and
+            # therefore RS_PENDING actually starting to poll) only happens
+            # on 64-tick boundaries, and RS_PEND_MAX (resync.asm) is only
+            # 60 ticks -- a narrow forced window can fall entirely outside
+            # the window RS_PENDING is actually active in, regardless of
+            # how carefully its wall-clock offset from the fault is
+            # chosen (confirmed: a 30-round/~2.5s version of this loop
+            # still reported the cap, not quiescent -- RS_GATE only
+            # records the MOST RECENT push's reason, and this cart's own
+            # organic desync, unrelated to the deliberate fault, keeps
+            # triggering further cap-driven pushes for the rest of the
+            # run, overwriting the evidence even if the quiescent branch
+            # DID fire once during the narrow window).
+            #
+            # RS_PENDING checks SC_PHASE/SC_PHASE_DEAD FIRST and pushes
+            # IMMEDIATELY if quiescent (`BNEQ @@rp_go`, resync.asm) -- so
+            # forcing the flag TRUE continuously guarantees every push
+            # that becomes pending during the window takes the quiescent
+            # branch, CONFIRMED live: "QUIESCENT ($0164==0 AND $01D9==0)
+            # after 3 ticks" / "the dead-ball branch of RS_PENDING fired
+            # as intended".  Bounded to ~15s (well past the ~4s cap and
+            # comfortably past whatever the 64-tick CRC-cadence alignment
+            # turns out to be) rather than the whole remaining run: forcing
+            # the WHOLE run holds console 1 in an artificial, permanently
+            # wrong state relative to console 2 forever, which manufactures
+            # its OWN endless stream of mismatches and never lets the
+            # session demonstrate a genuinely clean recovered end state --
+            # confirmed the hard way (30 mismatches, "recovered-after-
+            # fault=False", even though the one thing this run exists to
+            # prove -- the quiescent branch firing -- had already
+            # succeeded). Releasing the force lets the rest of the run
+            # settle normally, same as the non-QUIESCE case.
+            printf 'r 8000000\n'
+            k=0
+            while [ "$k" -lt 60 ]; do
+                printf 'e 164 0\ne 1D9 4\nr 50000\n'
+                k=$((k+1))
+            done
+            # Capture RS_GATE right here, before any LATER (organic,
+            # unrelated to this deliberate fault) push has a chance to
+            # overwrite it -- it is a single cell holding only the reason
+            # for the MOST RECENT push, so the final end-of-run dump alone
+            # cannot distinguish "the quiescent branch fired here" from
+            # "it fired here, then something else pushed again later".
+            printf 'm 818A 1\n'
+            printf 'r %d\n' $(( (SECS - 40 - 15) * 200000 ))
         elif [ "$i" = 2 ]; then
-            # Fault: rewrite console 2's OWN SCORE ($0177).  It is inside
-            # the CRC range $015D-$01EF, it is unambiguously game state
-            # rather than scratch, and a divergence in it is exactly the
-            # kind a player would notice -- so recovery here is meaningful.
-            printf 'r 8000000\ne 177 5\nr %d\n' $(( (SECS - 40) * 200000 ))
+            # Fault: rewrite console 2's SB_INVENTORY seat-0 ship-type-0
+            # count ($01B5).  It is inside the CRC range $015D-$01EF, it
+            # is unambiguously game state (a keypad-assigned resource
+            # count) rather than scratch, and a divergence in it is
+            # exactly the kind a player would notice -- so recovery here
+            # is meaningful.
+            printf 'r 8000000\ne 1B5 77\nr %d\n' $(( (SECS - 40) * 200000 ))
         else
             printf 'r %d\n' $(( SECS * 200000 ))
         fi
-        printf 'm 8100 20\nm 8150 60\nm 80C0 2\nm 8180 10\nm 8090 10\nm 0170 10\nq\n'
+        printf 'm 8100 20\nm 8150 60\nm 80C0 2\nm 8180 10\nm 8090 10\nm 0160 10\n'
+        printf 'm 01B5 9\nm 017D 8\nq\n'
     } > "$RIG/m4c$i.scr"
     SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
         timeout $((RUN_SECS + 200)) "$JZINTV" -d --script="$RIG/m4c$i.scr" \
@@ -101,6 +161,18 @@ def cells(path):
             mem[a + i] = int(w.rstrip("*"), 16)
     return mem
 
+def first_reading(path, addr):
+    """The FIRST time `addr` was dumped in `path`, not the last -- for
+    cells like RS_GATE ($818A) that get overwritten by a later, unrelated
+    push before the run ends."""
+    for m in re.finditer(r"^([0-9A-F]{4}):((?:\s+[0-9A-F]{4}\*?){1,8})\s*#",
+                         open(path).read(), re.M):
+        a = int(m.group(1), 16)
+        for i, w in enumerate(m.group(2).split()):
+            if a + i == addr:
+                return int(w.rstrip("*"), 16)
+    return None
+
 ok = True
 for n in range(1, players + 1):
     m = cells(f"{rig}/m4c{n}.out")
@@ -113,27 +185,48 @@ for n in range(1, players + 1):
     gtbl = m.get(0x80C0, 0) | (m.get(0x80C1, 0) << 8)
     gate = "n/a (guest)" if seat else {
         0: "never pushed",
-        1: f"QUIESCENT (dead ball, $0179 AND $7B) after {waited} ticks",
+        1: f"QUIESCENT ($0164==0 AND $01D9==0) after {waited} ticks",
         2: f"cap expired at {waited} ticks (pushed mid-motion)"}.get(why, "?")
     print(f"console {n}: seat={seat} active={active} dropped={dropped} "
           f"hold={hold} tick={tick} diag(slip,rej,tmo,err)={diag}")
     print(f"           resync gate: pending={pend} GAME_TBL=${gtbl:04X} -> {gate}")
     ok &= (active == 1 and dropped == 0 and hold == 0 and tick > 400
            and diag == [0, 0, 0, 0])
-    # Destination-phase assertion (§7.25).  GAME_TBL is a constant on this
-    # cart, so the check comes from game state -- same traps as the rig.
-    phase, clk = m.get(0x179, 0), (m.get(0x174), m.get(0x175))
-    print(f"           phase=${phase:02X} clock={clk[0]:02X}:{clk[1]:02X}")
-    if phase == 0x40:
-        print(f"console {n}: PARKED AT PERIOD OVER ($0179=$40) (§7.25)")
+    # Destination-phase assertion (§7.25): GAME_TBL is a constant while
+    # $0164 stays 1 (map, live) on this cart, so the check comes from game
+    # state -- SB_INVENTORY changed / a fleet launched, same signals as
+    # check_dest_phase.py and the rig verdict.
+    phase = m.get(0x164, 0)
+    inventory = [m.get(0x1B5 + i) for i in range(9)]
+    boot_inventory = [0x11, 0x11, 0x22, 0x11, 0x33, 0x22, 0x11, 0x22, 0x33]
+    inventory_changed = None not in inventory and inventory != boot_inventory
+    fleet_launched = any(m.get(0x17D + i, 0) & 0x04 for i in range(8))
+    print(f"           $0164=${phase:02X} inventory_changed={inventory_changed} "
+          f"fleet_launched={fleet_launched}")
+    if phase == 0x06:
+        print(f"console {n}: PARKED AT GAME OVER ($0164=$06), terminal (§7.25)")
         ok = False
-    if clk == (0x2D, 0x00):
-        print(f"console {n}: match clock never left 45:00 -- play never went live")
+    if not inventory_changed and not fleet_launched:
+        print(f"console {n}: no keypad input ever landed -- no real gameplay covered")
+        ok = False
+    # The fault itself: console 2's $01B5 was poked to $77 mid-run.  By the
+    # end of a successful recovery it must NOT still read $77 on EITHER
+    # console -- a resync that only fixed the CRC bookkeeping but left the
+    # actual corrupted byte in place would be a false pass.
+    if inventory[0] == 0x77:
+        print(f"console {n}: SB_INVENTORY[0] is still the fault value $77 -- "
+              f"not actually repaired")
         ok = False
 
 # QUIESCE=1 exists to prove the quiescent branch works at all; require it.
+# Read the FIRST $818A dump (right after the forcing window in the
+# console script), not the last -- this cart's own organic desync
+# (spikes/NOTES.md M4) keeps triggering further, unrelated cap-driven
+# pushes for the rest of the run, which would overwrite RS_GATE by the
+# time the final end-of-run dump happens even when the quiescent branch
+# genuinely fired exactly as intended.
 if os.environ.get("QUIESCE"):
-    host_why = cells(f"{rig}/m4c1.out").get(0x818A, 0)
+    host_why = first_reading(f"{rig}/m4c1.out", 0x818A)
     if host_why != 1:
         print(f"QUIESCE run: host RS_GATE={host_why}, expected 1 (quiescent) "
               f"-- the dead-ball branch of RS_PENDING did not fire")

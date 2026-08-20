@@ -190,20 +190,28 @@ SB_BLINK        EQU     $015F   ; +seat: fleet-blink counter 0..10, proves
                                 ;  only, not an input-landed proof).
 SB_EVT_ARM      EQU     $01D8   ; 10-tick countdown gating the phase 4->7->5
                                 ;  transition sequence
-SB_EVT_CNT      EQU     $01D9   ; settle countdown; ($0164==0 && this==0) is
-                                ;  the QUIESCENT POINT candidate (below)
+SB_EVT_CNT      EQU     $01D9   ; settle countdown, decremented every pass
+                                ;  by SB_TICK1's own outer body regardless
+                                ;  of phase; phase 0 stays entered for as
+                                ;  long as this is nonzero
 
-; §7.6 quiescent point: ($0164==0 && $01D9==0) -- equivalently
-; $035D==$1906 (the EXEC null table) -- the map<->battle handover, all
-; input dead for ~3 passes.  resync.asm's generic RS_PENDING reads this
-; through SC_PHASE/SC_PHASE_DEAD (defined in ram.asm, alongside the
-; SB_QUIESCENT cell they point at -- include-order: this file is included
-; before ram.asm in core.asm, so a forward reference to a ram.asm symbol
-; here does not assemble).  NOT yet confirmed on screen that this window
-; is truly all-input-dead -- recon-level decode. §7.29 still applies:
-; masked $3F disc-only fuzz can never launch a fleet, so it can never
-; reach this point either -- a QUIESCE=1 forcing mode is required, not
-; optional, before trusting `make m4`'s quiescent branch. Not yet written.
+; §7.6 quiescent point: $0164==0 alone (equivalently $035D==$1906, the
+; EXEC null table) -- CONFIRMED, live-traced (M4): $5C65-$5C6E, inside the
+; tactical-battle-exit handler, sets $0164:=0 then $01D9:=4 -- a real,
+; RECURRING 4-tick window every time a battle ends, all input dead, the
+; map redrawn from the restored fleet positions. NOT `$0164==0 &&
+; $01D9==0` (the M3 draft's condition): phase 0's own body ($52CD) tests
+; $01D9==0 FIRST, each tick, and transitions to phase 1 in the SAME tick
+; that becomes true -- so checked AFTER SB_TICK1 has already run this
+; tick (which is when SB_QUIESCENT is computed, src/hook.asm), that
+; conjunction can essentially never be observed. resync.asm's generic
+; RS_PENDING reads this through SC_PHASE/SC_PHASE_DEAD (defined in
+; ram.asm, alongside the SB_QUIESCENT cell they point at -- include-
+; order: this file is included before ram.asm in core.asm, so a forward
+; reference to a ram.asm symbol here does not assemble). §7.29 still
+; applies: masked $3F disc-only fuzz can never launch a fleet, let alone
+; complete a battle, so it can never reach this point either -- the
+; QUIESCE=1 forcing mode in test/run_m4.sh exercises it directly.
 
 ; §7.9 false-PASS candidates: THREE bare `DECR R7` one-instruction self-loops
 ; found at $5E90, $5EA7 and $5EAE -- all inside the MOB animation-script

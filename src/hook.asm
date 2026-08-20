@@ -247,13 +247,24 @@ SC_GAME_TICK:
         MVO     R0,     SC_CNT2
         MVI     SB_CNT2_HI, R0
         MVO     R0,     SC_CNT3
-        ; SB_QUIESCENT: 1 iff $0164==0 AND $01D9==0 (spikes/NOTES.md M3's
+        ; SB_QUIESCENT: 1 iff $0164==0 (spikes/NOTES.md M4's corrected
         ; quiescent point) -- resync.asm's generic RS_PENDING reads this
-        ; through SC_PHASE/SC_PHASE_DEAD (exec_equ.asm).
+        ; through SC_PHASE/SC_PHASE_DEAD (exec_equ.asm/ram.asm).
+        ;
+        ; CORRECTED from the M3 draft, which additionally required
+        ; $01D9==0.  Phase 0's OWN body ($52CD, dispatched by SB_TICK1
+        ; just above this point in the SAME tick) tests $01D9==0 FIRST and
+        ; transitions to phase 1 immediately when true -- so by the time
+        ; this check runs (after SB_TICK1 has already executed this tick),
+        ; "$0164==0 AND $01D9==0" can essentially never be observed: if
+        ; $01D9 WAS 0 when SB_TICK1 ran, $0164 is already 1 by now.  Sitting
+        ; in phase 0 at all (checked post-tick) already means $01D9 was
+        ; NONZERO this tick -- i.e. still counting down -- which is exactly
+        ; the settling window, confirmed live-traced to $5C65-$5C6E: every
+        ; tactical-battle exit sets $0164:=0 then $01D9:=4, a real,
+        ; RECURRING 4-tick quiescent window every time a battle ends, not a
+        ; one-time boot artifact.
         MVI     SB_PHASE, R0
-        TSTR    R0
-        BNEQ    @@gt_not_q
-        MVI     SB_EVT_CNT, R0
         TSTR    R0
         BNEQ    @@gt_not_q
         MVII    #1,     R0
